@@ -49,6 +49,7 @@ class Mark {
     this._opt = Object.assign({}, {
       'element': '',
       'className': '',
+      'attribute': '',
       'exclude': [],
       'iframes': false,
       'iframesTimeout': 5000,
@@ -420,17 +421,19 @@ class Mark {
    */
   wrapRangeInMappedTextNode(dict, start, end, filterCb, eachCb) {
     // iterate over all text nodes to find the one matching the positions
+    let matchedFirstPart = false;
     dict.nodes.every((n, i) => {
       const sibl = dict.nodes[i + 1];
       if (typeof sibl === 'undefined' || sibl.start > start) {
-        if (!filterCb(n.node)) {
-          return false;
-        }
         // map range from dict.value to text node
         const s = start - n.start,
           e = (end > n.end ? n.end : end) - n.start,
           startStr = dict.value.substr(0, n.start),
           endStr = dict.value.substr(e + n.start);
+
+        if (!matchedFirstPart && !filterCb(n.node, s, start)) {
+          return false;
+        }
         n.node = this.wrapRangeInTextNode(n.node, s, e);
         // recalculate positions to also find subsequent matches in the
         // same text node. Necessary as the text node in dict now only
@@ -446,6 +449,7 @@ class Mark {
         });
         end -= e;
         eachCb(n.node.previousSibling, n.start);
+        matchedFirstPart = true;
         if (end > n.end) {
           start = n.end;
         } else {
@@ -533,7 +537,13 @@ class Mark {
               eachCb
             );
           } else {
-            if (!filterCb(match[matchIdx], node)) {
+            let offset = match.index;
+            if (matchIdx !== 0) {
+              for (let i = 1; i < matchIdx; i++) {
+                offset += match[i].length;
+              }
+            }
+            if (!filterCb(match[matchIdx], node, offset)) {
               continue;
             }
             let pos = match.index;
@@ -599,12 +609,13 @@ class Mark {
         // note that dict will be updated automatically, as it'll change
         // in the wrapping process, due to the fact that text
         // nodes will be splitted
-        this.wrapRangeInMappedTextNode(dict, start, end, node => {
-          return filterCb(match[matchIdx], node);
-        }, (node, lastIndex) => {
-          regex.lastIndex = lastIndex;
-          eachCb(node);
-        });
+        this.wrapRangeInMappedTextNode(dict, start, end, 
+          (node, offsetInCurrNode) => {
+            return filterCb(match[matchIdx], node, offsetInCurrNode);
+          }, (node, lastIndex) => {
+            regex.lastIndex = lastIndex;
+            eachCb(node);
+          });
       }
       endCb();
     });
@@ -729,6 +740,7 @@ class Mark {
    * @type {object.<string>}
    * @property {string} [element="mark"] - HTML element tag name
    * @property {string} [className] - An optional class name
+   * @property {object} [attribute] - An optional attribute key-value pair
    * @property {string[]} [exclude] - An array with exclusion selectors.
    * Elements matching those selectors will be ignored
    * @property {boolean} [iframes=false] - Whether to search inside iframes
@@ -837,8 +849,9 @@ class Mark {
         const regex = new RegExpCreator(this.opt).create(kw);
         let matches = 0;
         this.log(`Searching with expression "${regex}"`);
-        this[fn](regex, 1, (term, node) => {
-          return this.opt.filter(node, kw, totalMatches, matches);
+        this[fn](regex, 1, (term, node, offsetInCurrNode) => {
+          return this.opt.filter(node, 
+            kw, offsetInCurrNode, totalMatches, matches);
         }, element => {
           matches++;
           totalMatches++;
@@ -937,6 +950,9 @@ class Mark {
     this.opt = opt;
     let sel = this.opt.element ? this.opt.element : '*';
     sel += '[data-markjs]';
+    if (this.opt.attribute){
+      sel += `[${this.opt.attribute.key}="${this.opt.attribute.value}"]`;
+    }
     if (this.opt.className) {
       sel += `.${this.opt.className}`;
     }

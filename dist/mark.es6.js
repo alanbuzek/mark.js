@@ -1,7 +1,7 @@
 /*!***************************************************
 * mark.js v9.0.0
 * https://markjs.io/
-* Copyright (c) 2014–2018, Julian Kühnel
+* Copyright (c) 2014–2022, Julian Kühnel
 * Released under the MIT license https://git.io/vwTVl
 *****************************************************/
 
@@ -488,6 +488,7 @@
       this._opt = Object.assign({}, {
         'element': '',
         'className': '',
+        'attribute': '',
         'exclude': [],
         'iframes': false,
         'iframesTimeout': 5000,
@@ -671,16 +672,17 @@
       return ret;
     }
     wrapRangeInMappedTextNode(dict, start, end, filterCb, eachCb) {
+      let matchedFirstPart = false;
       dict.nodes.every((n, i) => {
         const sibl = dict.nodes[i + 1];
         if (typeof sibl === 'undefined' || sibl.start > start) {
-          if (!filterCb(n.node)) {
-            return false;
-          }
           const s = start - n.start,
             e = (end > n.end ? n.end : end) - n.start,
             startStr = dict.value.substr(0, n.start),
             endStr = dict.value.substr(e + n.start);
+          if (!matchedFirstPart && !filterCb(n.node, s, start)) {
+            return false;
+          }
           n.node = this.wrapRangeInTextNode(n.node, s, e);
           dict.value = startStr + endStr;
           dict.nodes.forEach((k, j) => {
@@ -693,6 +695,7 @@
           });
           end -= e;
           eachCb(n.node.previousSibling, n.start);
+          matchedFirstPart = true;
           if (end > n.end) {
             start = n.end;
           } else {
@@ -727,7 +730,7 @@
             (match = regex.exec(node.textContent)) !== null &&
             match[matchIdx] !== ''
           ) {
-            if (this.opt.separateGroups) {
+            if (this.opt.separateGroups && match.length !== 1){
               node = this.separateGroups(
                 node,
                 match,
@@ -736,7 +739,13 @@
                 eachCb
               );
             } else {
-              if (!filterCb(match[matchIdx], node)) {
+              let offset = match.index;
+              if (matchIdx !== 0) {
+                for (let i = 1; i < matchIdx; i++) {
+                  offset += match[i].length;
+                }
+              }
+              if (!filterCb(match[matchIdx], node, offset)) {
                 continue;
               }
               let pos = match.index;
@@ -768,12 +777,13 @@
             }
           }
           const end = start + match[matchIdx].length;
-          this.wrapRangeInMappedTextNode(dict, start, end, node => {
-            return filterCb(match[matchIdx], node);
-          }, (node, lastIndex) => {
-            regex.lastIndex = lastIndex;
-            eachCb(node);
-          });
+          this.wrapRangeInMappedTextNode(dict, start, end,
+            (node, offsetInCurrNode) => {
+              return filterCb(match[matchIdx], node, offsetInCurrNode);
+            }, (node, lastIndex) => {
+              regex.lastIndex = lastIndex;
+              eachCb(node);
+            });
         }
         endCb();
       });
@@ -863,8 +873,9 @@
           const regex = new RegExpCreator(this.opt).create(kw);
           let matches = 0;
           this.log(`Searching with expression "${regex}"`);
-          this[fn](regex, 1, (term, node) => {
-            return this.opt.filter(node, kw, totalMatches, matches);
+          this[fn](regex, 1, (term, node, offsetInCurrNode) => {
+            return this.opt.filter(node,
+              kw, offsetInCurrNode, totalMatches, matches);
           }, element => {
             matches++;
             totalMatches++;
@@ -916,6 +927,9 @@
       this.opt = opt;
       let sel = this.opt.element ? this.opt.element : '*';
       sel += '[data-markjs]';
+      if (this.opt.attribute){
+        sel += `[${this.opt.attribute.key}="${this.opt.attribute.value}"]`;
+      }
       if (this.opt.className) {
         sel += `.${this.opt.className}`;
       }
